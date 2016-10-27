@@ -3,7 +3,7 @@
 # Noted due to the fixed FD, a shell process can only create one lock.
 lock() {
   local name="$1"
-  local lock_dir="$HOMEBREW_LIBRARY/Locks"
+  local lock_dir="$HOMEBREW_PREFIX/var/homebrew/locks"
   local lock_file="$lock_dir/$name"
   [[ -d "$lock_dir" ]] || mkdir -p "$lock_dir"
   # 200 is the file descriptor used in the lock.
@@ -29,7 +29,7 @@ EOS
 _create_lock() {
   local lock_fd="$1"
   local ruby="/usr/bin/ruby"
-  [[ -x "$ruby" ]] || local ruby="$(which ruby 2>/dev/null)"
+  [[ -x "$ruby" ]] || ruby="$(which ruby 2>/dev/null)"
 
   if [[ -n "$ruby" ]]
   then

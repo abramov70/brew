@@ -1,22 +1,17 @@
 class Keg
   PREFIX_PLACEHOLDER = "@@HOMEBREW_PREFIX@@".freeze
   CELLAR_PLACEHOLDER = "@@HOMEBREW_CELLAR@@".freeze
+  REPOSITORY_PLACEHOLDER = "@@HOMEBREW_REPOSITORY@@".freeze
 
-  def fix_install_names
-    mach_o_files.each do |file|
-      file.ensure_writable do
-        change_dylib_id(dylib_id_for(file), file) if file.dylib?
-
-        each_install_name_for(file) do |bad_name|
-          # Don't fix absolute paths unless they are rooted in the build directory
-          next if bad_name.start_with?("/") && !bad_name.start_with?(HOMEBREW_TEMP.to_s)
-
-          new_name = fixed_name(file, bad_name)
-          change_install_name(bad_name, new_name, file) unless new_name == bad_name
-        end
-      end
+  Relocation = Struct.new(:old_prefix, :old_cellar, :old_repository,
+                          :new_prefix, :new_cellar, :new_repository) do
+    # Use keyword args instead of positional args for initialization
+    def initialize(**kwargs)
+      super(*members.map { |k| kwargs[k] })
     end
+  end
 
+  def fix_dynamic_linkage
     symlink_files.each do |file|
       link = file.readlink
       # Don't fix relative symlinks
@@ -26,37 +21,56 @@ class Keg
       end
     end
   end
+  alias generic_fix_dynamic_linkage fix_dynamic_linkage
 
-  def relocate_install_names(old_prefix, new_prefix, old_cellar, new_cellar)
-    mach_o_files.each do |file|
-      file.ensure_writable do
-        if file.dylib?
-          id = dylib_id_for(file).sub(old_prefix, new_prefix)
-          change_dylib_id(id, file)
-        end
-
-        each_install_name_for(file) do |old_name|
-          if old_name.start_with? old_cellar
-            new_name = old_name.sub(old_cellar, new_cellar)
-          elsif old_name.start_with? old_prefix
-            new_name = old_name.sub(old_prefix, new_prefix)
-          end
-
-          change_install_name(old_name, new_name, file) if new_name
-        end
-      end
-    end
+  def relocate_dynamic_linkage(_relocation)
+    []
   end
 
-  def relocate_text_files(old_prefix, new_prefix, old_cellar, new_cellar)
-    files = text_files | libtool_files
+  def replace_locations_with_placeholders
+    relocation = Relocation.new(
+      old_prefix: HOMEBREW_PREFIX.to_s,
+      old_cellar: HOMEBREW_CELLAR.to_s,
+      old_repository: HOMEBREW_REPOSITORY.to_s,
+      new_prefix: PREFIX_PLACEHOLDER,
+      new_cellar: CELLAR_PLACEHOLDER,
+      new_repository: REPOSITORY_PLACEHOLDER
+    )
+    relocate_dynamic_linkage(relocation)
+    replace_text_in_files(relocation)
+  end
 
-    files.group_by { |f| f.stat.ino }.each_value do |first, *rest|
+  def replace_placeholders_with_locations(files, skip_linkage: false)
+    relocation = Relocation.new(
+      old_prefix: PREFIX_PLACEHOLDER,
+      old_cellar: CELLAR_PLACEHOLDER,
+      old_repository: REPOSITORY_PLACEHOLDER,
+      new_prefix: HOMEBREW_PREFIX.to_s,
+      new_cellar: HOMEBREW_CELLAR.to_s,
+      new_repository: HOMEBREW_REPOSITORY.to_s
+    )
+    relocate_dynamic_linkage(relocation) unless skip_linkage
+    replace_text_in_files(relocation, files: files)
+  end
+
+  def replace_text_in_files(relocation, files: nil)
+    files ||= text_files | libtool_files
+
+    changed_files = []
+    files.map(&path.method(:join)).group_by { |f| f.stat.ino }.each_value do |first, *rest|
       s = first.open("rb", &:read)
-      changed = s.gsub!(old_cellar, new_cellar)
-      changed = s.gsub!(old_prefix, new_prefix) || changed
+
+      replacements = {
+        relocation.old_prefix => relocation.new_prefix,
+        relocation.old_cellar => relocation.new_cellar,
+        relocation.old_repository => relocation.new_repository,
+      }
+
+      regexp = Regexp.union(replacements.keys)
+      changed = s.gsub!(regexp, replacements)
 
       next unless changed
+      changed_files << first.relative_path_from(path)
 
       begin
         first.atomic_write(s)
@@ -65,27 +79,14 @@ class Keg
           first.open("wb") { |f| f.write(s) }
         end
       else
-        rest.each { |file| FileUtils.ln(first, file, :force => true) }
+        rest.each { |file| FileUtils.ln(first, file, force: true) }
       end
     end
+    changed_files
   end
 
-  # Detects the C++ dynamic libraries in place, scanning the dynamic links
-  # of the files within the keg.
-  # Note that this doesn't attempt to distinguish between libstdc++ versions,
-  # for instance between Apple libstdc++ and GNU libstdc++
-  def detect_cxx_stdlibs(options = {})
-    skip_executables = options.fetch(:skip_executables, false)
-    results = Set.new
-
-    mach_o_files.each do |file|
-      next if file.mach_o_executable? && skip_executables
-      dylibs = file.dynamically_linked_libraries
-      results << :libcxx unless dylibs.grep(/libc\+\+.+\.dylib/).empty?
-      results << :libstdcxx unless dylibs.grep(/libstdc\+\+.+\.dylib/).empty?
-    end
-
-    results.to_a
+  def detect_cxx_stdlibs(_options = {})
+    []
   end
 
   def each_unique_file_matching(string)
@@ -100,80 +101,44 @@ class Keg
     end
   end
 
-  # If file is a dylib or bundle itself, look for the dylib named by
-  # bad_name relative to the lib directory, so that we can skip the more
-  # expensive recursive search if possible.
-  def fixed_name(file, bad_name)
-    if bad_name.start_with? PREFIX_PLACEHOLDER
-      bad_name.sub(PREFIX_PLACEHOLDER, HOMEBREW_PREFIX.to_s)
-    elsif bad_name.start_with? CELLAR_PLACEHOLDER
-      bad_name.sub(CELLAR_PLACEHOLDER, HOMEBREW_CELLAR.to_s)
-    elsif (file.dylib? || file.mach_o_bundle?) && (file.parent + bad_name).exist?
-      "@loader_path/#{bad_name}"
-    elsif file.mach_o_executable? && (lib + bad_name).exist?
-      "#{lib}/#{bad_name}"
-    elsif (abs_name = find_dylib(bad_name)) && abs_name.exist?
-      abs_name.to_s
-    else
-      opoo "Could not fix #{bad_name} in #{file}"
-      bad_name
-    end
-  end
-
   def lib
     path.join("lib")
   end
 
-  def each_install_name_for(file, &block)
-    dylibs = file.dynamically_linked_libraries
-    dylibs.reject! { |fn| fn =~ /^@(loader_|executable_|r)path/ }
-    dylibs.each(&block)
-  end
-
-  def dylib_id_for(file)
-    # The new dylib ID should have the same basename as the old dylib ID, not
-    # the basename of the file itself.
-    basename = File.basename(file.dylib_id)
-    relative_dirname = file.dirname.relative_path_from(path)
-    opt_record.join(relative_dirname, basename).to_s
-  end
-
-  # Matches framework references like `XXX.framework/Versions/YYY/XXX` and
-  # `XXX.framework/XXX`, both with or without a slash-delimited prefix.
-  FRAMEWORK_RX = %r{(?:^|/)(([^/]+)\.framework/(?:Versions/[^/]+/)?\2)$}.freeze
-
-  def find_dylib_suffix_from(bad_name)
-    if (framework = bad_name.match(FRAMEWORK_RX))
-      framework[1]
-    else
-      File.basename(bad_name)
-    end
-  end
-
-  def find_dylib(bad_name)
-    return unless lib.directory?
-    suffix = "/#{find_dylib_suffix_from(bad_name)}"
-    lib.find { |pn| break pn if pn.to_s.end_with?(suffix) }
-  end
-
-  def mach_o_files
-    mach_o_files = []
-    path.find do |pn|
-      next if pn.symlink? || pn.directory?
-      mach_o_files << pn if pn.dylib? || pn.mach_o_bundle? || pn.mach_o_executable?
-    end
-
-    mach_o_files
-  end
-
   def text_files
     text_files = []
-    path.find do |pn|
-      next if pn.symlink? || pn.directory?
-      next if Metafiles::EXTENSIONS.include? pn.extname
-      if Utils.popen_read("/usr/bin/file", "--brief", pn).include?("text") ||
-         pn.text_executable?
-        text_files << pn
+    return text_files unless File.exist?("/usr/bin/file")
+
+    # file has known issues with reading files on other locales. Has
+    # been fixed upstream for some time, but a sufficiently new enough
+    # file with that fix is only available in macOS Sierra.
+    # http://bugs.gw.com/view.php?id=292
+    with_custom_locale("C") do
+      files = Set.new path.find.reject { |pn|
+        next true if pn.symlink?
+        next true if pn.directory?
+        next true if Metafiles::EXTENSIONS.include?(pn.extname)
+        if pn.text_executable?
+          text_files << pn
+          next true
+        end
+        false
+      }
+      output, _status = Open3.capture2("/usr/bin/xargs -0 /usr/bin/file --no-dereference --print0",
+                                       stdin_data: files.to_a.join("\0"))
+      # `file` output sometimes contains data from the file, which may include
+      # invalid UTF-8 entities, so tell Ruby this is just a bytestring
+      output.force_encoding(Encoding::ASCII_8BIT)
+      output.each_line do |line|
+        path, info = line.split("\0", 2)
+        # `file` sometimes prints more than one line of output per file;
+        # subsequent lines do not contain a null-byte separator, so `info`
+        # will be `nil` for those lines
+        next unless info
+        next unless info.include?("text")
+        path = Pathname.new(path)
+        next unless files.include?(path)
+        text_files << path
       end
     end
 
@@ -198,4 +163,10 @@ class Keg
 
     symlink_files
   end
+
+  def self.file_linked_libraries(_file, _string)
+    []
+  end
 end
+
+require "extend/os/keg_relocate"

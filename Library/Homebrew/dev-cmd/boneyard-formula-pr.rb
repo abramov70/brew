@@ -1,10 +1,10 @@
-# Creates a pull request to boneyard a formula.
-#
-# Usage: brew boneyard-formula-pr [options...] <formula-name>
-#
-# Options:
-#   --dry-run:  Print what would be done rather than doing it.
-#   --local:    Perform only local operations (don't push and don't create PR).
+#: @hide_from_man_page
+#:  * `boneyard-formula-pr` [`--dry-run`] [`--local`]  <formula-name>:
+#:    Creates a pull request to boneyard a formula.
+#:
+#:    If `--dry-run` is passed, print what would be done rather than doing it.
+#:
+#:    If `--local` is passed, perform only local operations (i.e. don't push or create PR).
 
 require "formula"
 require "utils/json"
@@ -19,6 +19,8 @@ rescue LoadError
 end
 
 module Homebrew
+  module_function
+
   def boneyard_formula_pr
     local_only = ARGV.include?("--local")
     formula = ARGV.formulae.first
@@ -90,7 +92,7 @@ module Homebrew
       unless local_only
         safe_system "hub", "fork", "--no-remote"
         quiet_system "hub", "fork"
-        remote = Utils.popen_read("hub fork 2>&1")[/fatal: remote (.+) already exists./, 1]
+        remote = Utils.popen_read("hub fork 2>&1")[/fatal: remote (.+) already exists\./, 1]
         odie "cannot get remote from 'hub'!" unless remote
         safe_system "git", "push", remote, "#{branch}:#{branch}"
         pr_message = <<-EOS.undent
@@ -134,7 +136,7 @@ module Homebrew
       unless local_only
         safe_system "hub", "fork", "--no-remote"
         quiet_system "hub", "fork"
-        remote = Utils.popen_read("hub fork 2>&1")[/fatal: remote (.+) already exists./, 1]
+        remote = Utils.popen_read("hub fork 2>&1")[/fatal: remote (.+) already exists\./, 1]
         odie "cannot get remote from 'hub'!" unless remote
         safe_system "git", "push", remote, "#{branch}:#{branch}"
         safe_system "hub", "pull-request", "--browse", "-m", <<-EOS.undent
