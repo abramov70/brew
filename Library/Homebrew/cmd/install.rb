@@ -135,13 +135,45 @@ module Homebrew
           raise "No devel block is defined for #{f.full_name}"
         end
 
-        current = f if f.installed?
-        current ||= f.old_installed_formulae.first
+        installed_head_version = f.latest_head_version
+        new_head_installed = installed_head_version &&
+                             !f.head_version_outdated?(installed_head_version, fetch_head: ARGV.fetch_head?)
+        prefix_installed = f.prefix.exist? && !f.prefix.children.empty?
 
-        if current
-          msg = "#{current.full_name}-#{current.installed_version} already installed"
-          unless current.linked_keg.symlink? || current.keg_only?
-            msg << ", it's just not linked"
+        if f.keg_only? && f.any_version_installed? && f.optlinked? && !ARGV.force?
+          # keg-only install is only possible when no other version is
+          # linked to opt, because installing without any warnings can break
+          # dependencies. Therefore before performing other checks we need to be
+          # sure --force flag is passed.
+          opoo "#{f.full_name} is a keg-only and another version is linked to opt."
+          puts "Use `brew install --force` if you want to install this version"
+        elsif (ARGV.build_head? && new_head_installed) || prefix_installed
+          # After we're sure that --force flag is passed for linked to opt
+          # keg-only we need to be sure that the version we're attempting to
+          # install is not already installed.
+
+          installed_version = if ARGV.build_head?
+            f.latest_head_version
+          else
+            f.pkg_version
+          end
+
+          msg = "#{f.full_name}-#{installed_version} already installed"
+          linked_not_equals_installed = f.linked_version != installed_version
+          if f.linked? && linked_not_equals_installed
+            msg << ", however linked version is #{f.linked_version}"
+            opoo msg
+            puts "You can use `brew switch #{f} #{installed_version}` to link this version."
+          elsif !f.linked? || f.keg_only?
+            msg << ", it's just not linked."
+            opoo msg
+          else
+            opoo msg
+          end
+        elsif !f.any_version_installed? && old_formula = f.old_installed_formulae.first
+          msg = "#{old_formula.full_name}-#{old_formula.installed_version} already installed"
+          if !old_formula.linked? && !old_formula.keg_only?
+            msg << ", it's just not linked."
           end
           opoo msg
         elsif f.migration_needed? && !ARGV.force?
@@ -151,6 +183,8 @@ module Homebrew
           puts "You can migrate formula with `brew migrate #{f}`"
           puts "Or you can force install it with `brew install #{f} --force`"
         else
+          # If none of the above is true and the formula is linked, then
+          # FormulaInstaller will handle this case.
           formulae << f
         end
       end
@@ -222,25 +256,12 @@ module Homebrew
 
   def check_development_tools
     checks = Diagnostic::Checks.new
-    all_development_tools_checks = checks.development_tools_checks +
-                                   checks.fatal_development_tools_checks
-    all_development_tools_checks.each do |check|
+    checks.fatal_development_tools_checks.each do |check|
       out = checks.send(check)
       next if out.nil?
-      if checks.fatal_development_tools_checks.include?(check)
-        odie out
-      else
-        opoo out
-      end
+      ofail out
     end
-  end
-
-  def check_macports
-    return if MacOS.macports_or_fink.empty?
-
-    opoo "It appears you have MacPorts or Fink installed."
-    puts "Software installed with other package managers causes known problems for"
-    puts "Homebrew. If a formula fails to build, uninstall MacPorts/Fink and try again."
+    exit 1 if Homebrew.failed?
   end
 
   def check_cellar
@@ -261,19 +282,21 @@ module Homebrew
 
   def install_formula(f)
     f.print_tap_action
+    build_options = f.build
 
     fi = FormulaInstaller.new(f)
-    fi.options             = f.build.used_options
-    fi.ignore_deps         = ARGV.ignore_deps?
-    fi.only_deps           = ARGV.only_deps?
-    fi.build_bottle        = ARGV.build_bottle?
-    fi.build_from_source   = ARGV.build_from_source? || ARGV.build_all_from_source?
-    fi.force_bottle        = ARGV.force_bottle?
-    fi.interactive         = ARGV.interactive?
-    fi.git                 = ARGV.git?
-    fi.verbose             = ARGV.verbose?
-    fi.quieter             = ARGV.quieter?
-    fi.debug               = ARGV.debug?
+    fi.options              = build_options.used_options
+    fi.invalid_option_names = build_options.invalid_option_names
+    fi.ignore_deps          = ARGV.ignore_deps?
+    fi.only_deps            = ARGV.only_deps?
+    fi.build_bottle         = ARGV.build_bottle?
+    fi.build_from_source    = ARGV.build_from_source? || ARGV.build_all_from_source?
+    fi.force_bottle         = ARGV.force_bottle?
+    fi.interactive          = ARGV.interactive?
+    fi.git                  = ARGV.git?
+    fi.verbose              = ARGV.verbose?
+    fi.quieter              = ARGV.quieter?
+    fi.debug                = ARGV.debug?
     fi.prelude
     fi.install
     fi.finish
@@ -282,8 +305,5 @@ module Homebrew
     # another formula. In that case, don't generate an error, just move on.
   rescue CannotInstallFormulaError => e
     ofail e.message
-  rescue BuildError
-    check_macports
-    raise
   end
 end

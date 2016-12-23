@@ -251,6 +251,8 @@ module Homebrew
           relocatable = false if keg_contain?(cellar, keg, ignores)
           if prefix != prefix_check
             relocatable = false if keg_contain_absolute_symlink_starting_with?(prefix, keg)
+            relocatable = false if keg_contain?("#{prefix}/etc", keg, ignores)
+            relocatable = false if keg_contain?("#{prefix}/var", keg, ignores)
           end
           skip_relocation = relocatable && !keg.require_relocation?
         end
@@ -342,7 +344,7 @@ module Homebrew
       },
     }
     File.open("#{filename.prefix}.bottle.json", "w") do |file|
-      file.write Utils::JSON.dump json
+      file.write JSON.generate json
     end
   end
 
@@ -350,7 +352,7 @@ module Homebrew
     write = ARGV.include? "--write"
 
     bottles_hash = ARGV.named.reduce({}) do |hash, json_file|
-      deep_merge_hashes hash, Utils::JSON.load(IO.read(json_file))
+      deep_merge_hashes hash, JSON.parse(IO.read(json_file))
     end
 
     bottles_hash.each do |formula_name, bottle_hash|

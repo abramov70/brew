@@ -1,4 +1,4 @@
-require "utils/json"
+require "json"
 require "rexml/document"
 require "time"
 
@@ -20,7 +20,7 @@ class AbstractDownloadStrategy
   def fetch
   end
 
-  # Supress output
+  # Suppress output
   def shutup!
     @shutup = true
   end
@@ -444,14 +444,14 @@ class CurlApacheMirrorDownloadStrategy < CurlDownloadStrategy
     return super if @tried_apache_mirror
     @tried_apache_mirror = true
 
-    mirrors = Utils::JSON.load(apache_mirrors)
+    mirrors = JSON.parse(apache_mirrors)
     path_info = mirrors.fetch("path_info")
     @url = mirrors.fetch("preferred") + path_info
     @mirrors |= %W[https://archive.apache.org/dist/#{path_info}]
 
     ohai "Best Mirror #{@url}"
     super
-  rescue IndexError, Utils::JSON::Error
+  rescue IndexError, JSON::ParserError
     raise CurlDownloadStrategyError, "Couldn't determine mirror, try again later."
   end
 end
@@ -832,7 +832,12 @@ class GitHubGitDownloadStrategy < GitDownloadStrategy
     else
       return true unless commit
       return true unless @last_commit.start_with?(commit)
-      multiple_short_commits_exist?(commit)
+      if multiple_short_commits_exist?(commit)
+        true
+      else
+        version.update_commit(commit)
+        false
+      end
     end
   end
 end

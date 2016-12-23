@@ -40,27 +40,20 @@ This is our PGP key which is valid until May 24, 2017.
 ## Who Are You?
 Homebrew's lead maintainer is [Mike McQuaid](https://github.com/mikemcquaid).
 
-Homebrew's current maintainers are [Misty De Meo](https://github.com/mistydemeo), [Andrew Janke](https://github.com/apjanke), [Xu Cheng](https://github.com/xu-cheng), [Tomasz Pajor](https://github.com/nijikon), [Josh Hagins](https://github.com/jawshooah), [Baptiste Fontaine](https://github.com/bfontaine), [Zhiming Wang](https://github.com/zmwangx), [Markus Reiter](https://github.com/reitermarkus), [ilovezfs](https://github.com/ilovezfs), [Martin Afanasjew](https://github.com/UniqMartin), [Tom Schoonjans](https://github.com/tschoonj), [Uladzislau Shablinski](https://github.com/vladshablinsky), [Tim Smith](https://github.com/tdsmith) and [Alex Dunn](https://github.com/dunn).
+Homebrew's current maintainers are [Misty De Meo](https://github.com/mistydemeo), [Andrew Janke](https://github.com/apjanke), [Xu Cheng](https://github.com/xu-cheng), [Tomasz Pajor](https://github.com/nijikon), [Josh Hagins](https://github.com/jawshooah), [Baptiste Fontaine](https://github.com/bfontaine), [Markus Reiter](https://github.com/reitermarkus), [ilovezfs](https://github.com/ilovezfs), [Martin Afanasjew](https://github.com/UniqMartin), [Tom Schoonjans](https://github.com/tschoonj), [Uladzislau Shablinski](https://github.com/vladshablinsky), [Tim Smith](https://github.com/tdsmith) and [Alex Dunn](https://github.com/dunn).
 
 Former maintainers with significant contributions include [Dominyk Tiller](https://github.com/DomT4), [Brett Koonce](https://github.com/asparagui), [Jack Nagel](https://github.com/jacknagel), [Adam Vandenberg](https://github.com/adamv) and Homebrew's creator: [Max Howell](https://github.com/mxcl).
 
 ## License
-Code is under the [BSD 2 Clause (NetBSD) license](https://github.com/Homebrew/brew/tree/master/LICENSE.txt).
+Code is under the [BSD 2-clause "Simplified" License](https://github.com/Homebrew/brew/tree/master/LICENSE.txt).
 Documentation is under the [Creative Commons Attribution license](https://creativecommons.org/licenses/by/4.0/).
 
 ## Donations
 Homebrew is a non-profit project run entirely by unpaid volunteers. We need your funds to pay for software, hardware and hosting around continuous integration and future improvements to the project. Every donation will be spent on making Homebrew better for our users.
 
-Homebrew is a member of the [Software Freedom Conservancy](http://sfconservancy.org) which provides us with an ability to receive tax-deductible, Homebrew earmarked donations (and [many other services](http://sfconservancy.org/members/services/)). Software Freedom Conservancy, Inc. is a 501(c)(3) organization incorporated in New York, and donations made to it are fully tax-deductible to the extent permitted by law.
+Please consider a regular donation through Patreon:
 
-- [Donate with PayPal](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=V6ZE57MJRYC8L)
-- Donate by USA $ check from a USA bank:
-  - Make check payable to "Software Freedom Conservancy, Inc." and place "Directed donation: Homebrew" in the memo field.  Checks should then be mailed to:
-    - Software Freedom Conservancy, Inc.
-      137 Montague ST  STE 380
-      BROOKLYN, NY 11201             USA
-- Donate by wire transfer: contact accounting@sfconservancy.org for wire transfer details.
-- Donate with Flattr or PayPal Giving Fund: coming soon.
+[![Donate with Patreon](https://img.shields.io/badge/patreon-donate-green.svg)](https://www.patreon.com/homebrew)
 
 ## Sponsors
 Our CI infrastructure was paid for by [our Kickstarter supporters](https://github.com/Homebrew/brew/blob/master/docs/Kickstarter-Supporters.md).

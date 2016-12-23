@@ -13,9 +13,8 @@ class SoftwareSpec
   extend Forwardable
 
   PREDEFINED_OPTIONS = {
-    :universal => Option.new("universal", "Build a universal binary"),
-    :cxx11     => Option.new("c++11", "Build using C++11 mode"),
-    "32-bit"   => Option.new("32-bit", "Build 32-bit only"),
+    universal: Option.new("universal", "Build a universal binary"),
+    cxx11:     Option.new("c++11",     "Build using C++11 mode"),
   }.freeze
 
   attr_reader :name, :full_name, :owner
@@ -173,6 +172,8 @@ class SoftwareSpec
   end
 
   def fails_with(compiler, &block)
+    # TODO: deprecate this in future.
+    # odeprecated "fails_with :llvm" if compiler == :llvm
     compiler_failures << CompilerFailure.create(compiler, &block)
   end
 
@@ -221,7 +222,7 @@ class Bottle
     def initialize(name, version, tag, rebuild)
       @name = name
       @version = version
-      @tag = tag
+      @tag = tag.to_s.gsub(/_or_later$/, "")
       @rebuild = rebuild
     end
 
@@ -336,20 +337,19 @@ class BottleSpecification
   end
 
   def checksums
-    checksums = {}
-    os_versions = collector.keys
-    os_versions.map! do |macos|
+    tags = collector.keys.sort_by do |tag|
+      # Sort non-MacOS tags below MacOS tags.
       begin
-        MacOS::Version.from_symbol macos
+        MacOS::Version.from_symbol tag
       rescue
-        nil
+        "0.#{tag}"
       end
-    end.compact!
-    os_versions.sort.reverse_each do |os_version|
-      macos = os_version.to_sym
-      checksum = collector[macos]
+    end
+    checksums = {}
+    tags.reverse_each do |tag|
+      checksum = collector[tag]
       checksums[checksum.hash_type] ||= []
-      checksums[checksum.hash_type] << { checksum => macos }
+      checksums[checksum.hash_type] << { checksum => tag }
     end
     checksums
   end

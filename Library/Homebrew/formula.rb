@@ -26,7 +26,7 @@ require "migrator"
 # @see SharedEnvExtension
 # @see FileUtils
 # @see Pathname
-# @see http://www.rubydoc.info/github/Homebrew/brew/file/docs/Formula-Cookbook.md Formula Cookbook
+# @see https://github.com/Homebrew/brew/blob/master/docs/Formula-Cookbook.md Formula Cookbook
 # @see https://github.com/styleguide/ruby Ruby Style Guide
 #
 # <pre>class Wget < Formula
@@ -553,6 +553,28 @@ class Formula
     Pathname.new("#{HOMEBREW_CELLAR}/#{name}/#{v}")
   end
 
+  # Is the formula linked?
+  def linked?
+    linked_keg.symlink?
+  end
+
+  # Is the formula linked to opt?
+  def optlinked?
+    opt_prefix.symlink?
+  end
+
+  # Is formula's linked keg points to the prefix.
+  def prefix_linked?(v = pkg_version)
+    return false unless linked?
+    linked_keg.resolved_path == prefix(v)
+  end
+
+  # {PkgVersion} of the linked keg for the formula.
+  def linked_version
+    return unless linked?
+    Keg.for(linked_keg).version
+  end
+
   # The parent of the prefix; the named directory in the cellar containing all
   # installed versions of this software
   # @private
@@ -776,6 +798,22 @@ class Formula
   # across upgrades.
   def var
     HOMEBREW_PREFIX+"var"
+  end
+
+  # The directory where the formula's ZSH function files should be
+  # installed.
+  # This is symlinked into `HOMEBREW_PREFIX` after installation or with
+  # `brew link` for formulae that are not keg-only.
+  def zsh_function
+    share+"zsh/site-functions"
+  end
+
+  # The directory where the formula's fish function files should be
+  # installed.
+  # This is symlinked into `HOMEBREW_PREFIX` after installation or with
+  # `brew link` for formulae that are not keg-only.
+  def fish_function
+    share+"fish/vendor_functions.d"
   end
 
   # The directory where the formula's Bash completion files should be
@@ -1337,6 +1375,17 @@ class Formula
     end
   end
 
+  # Clear cache of .racks
+  def self.clear_racks_cache
+    @racks = nil
+  end
+
+  # Clear caches of .racks and .installed.
+  def self.clear_installed_formulae_cache
+    clear_racks_cache
+    @installed = nil
+  end
+
   # An array of all racks currently installed.
   # @private
   def self.racks
@@ -1457,6 +1506,26 @@ class Formula
   # @private
   def runtime_dependencies
     recursive_dependencies.reject(&:build?)
+  end
+
+  # Returns a list of formulae depended on by this formula that aren't
+  # installed
+  def missing_dependencies(hide: nil)
+    hide ||= []
+    missing_dependencies = recursive_dependencies do |dependent, dep|
+      if dep.optional? || dep.recommended?
+        tab = Tab.for_formula(dependent)
+        Dependency.prune unless tab.with?(dep)
+      elsif dep.build?
+        Dependency.prune
+      end
+    end
+
+    missing_dependencies.map!(&:to_formula)
+    missing_dependencies.select! do |d|
+      hide.include?(d.name) || d.installed_prefixes.empty?
+    end
+    missing_dependencies
   end
 
   # @private
@@ -1596,10 +1665,10 @@ class Formula
 
   # @private
   def test_fixtures(file)
-    HOMEBREW_LIBRARY_PATH.join("test", "fixtures", file)
+    HOMEBREW_LIBRARY_PATH.join("test", "support", "fixtures", file)
   end
 
-  # This method is overriden in {Formula} subclasses to provide the installation instructions.
+  # This method is overridden in {Formula} subclasses to provide the installation instructions.
   # The sources (from {.url}) are downloaded, hash-checked and
   # Homebrew changes into a temporary directory where the
   # archive was unpacked or repository cloned.
@@ -2271,6 +2340,8 @@ class Formula
     #   version '4.8.1'
     # end</pre>
     def fails_with(compiler, &block)
+      # TODO: deprecate this in future.
+      # odeprecated "fails_with :llvm" if compiler == :llvm
       specs.each { |spec| spec.fails_with(compiler, &block) }
     end
 

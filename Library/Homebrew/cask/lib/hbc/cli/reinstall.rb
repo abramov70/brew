@@ -7,6 +7,13 @@ module Hbc
           begin
             cask = Hbc.load(cask_token)
 
+            installer = Installer.new(cask,
+                                      force:          force,
+                                      skip_cask_deps: skip_cask_deps,
+                                      require_sha:    require_sha)
+            installer.print_caveats
+            installer.fetch
+
             if cask.installed?
               # use copy of cask for uninstallation to avoid 'No such file or directory' bug
               installed_cask = cask
@@ -19,17 +26,18 @@ module Hbc
                                                            "Casks", "#{cask_token}.rb")
 
                 # use the same cask file that was used for installation, if possible
-                installed_cask = Hbc.load(latest_installed_cask_file) if latest_installed_cask_file.exist?
+                installed_cask = CaskLoader.load_from_file(latest_installed_cask_file) if latest_installed_cask_file.exist?
               end
 
               # Always force uninstallation, ignore method parameter
               Installer.new(installed_cask, force: true).uninstall
             end
 
-            Installer.new(cask,
-                          force:          force,
-                          skip_cask_deps: skip_cask_deps,
-                          require_sha:    require_sha).install
+            installer.stage
+            installer.install_artifacts
+            installer.enable_accessibility_access
+            puts installer.summary
+
             count += 1
           rescue CaskUnavailableError => e
             warn_unavailable_with_suggestion cask_token, e

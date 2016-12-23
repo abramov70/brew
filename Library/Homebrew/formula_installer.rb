@@ -31,7 +31,7 @@ class FormulaInstaller
   end
 
   attr_reader :formula
-  attr_accessor :options, :build_bottle
+  attr_accessor :options, :build_bottle, :invalid_option_names
   mode_attr_accessor :show_summary_heading, :show_header
   mode_attr_accessor :build_from_source, :force_bottle
   mode_attr_accessor :ignore_deps, :only_deps, :interactive, :git
@@ -51,15 +51,13 @@ class FormulaInstaller
     @quieter = false
     @debug = false
     @options = Options.new
+    @invalid_option_names = []
+    @requirement_messages = []
 
     @@attempted ||= Set.new
 
     @poured_bottle = false
     @pour_failed   = false
-  end
-
-  def skip_deps_check?
-    ignore_deps?
   end
 
   # When no build tools are available and build flags are passed through ARGV,
@@ -123,7 +121,7 @@ class FormulaInstaller
 
   def prelude
     Tab.clear_cache
-    verify_deps_exist unless skip_deps_check?
+    verify_deps_exist unless ignore_deps?
     lock
     check_install_sanity
   end
@@ -145,7 +143,7 @@ class FormulaInstaller
   def check_install_sanity
     raise FormulaInstallationAlreadyAttemptedError, formula if @@attempted.include?(formula)
 
-    return if skip_deps_check?
+    return if ignore_deps?
 
     recursive_deps = formula.recursive_dependencies
     unlinked_deps = recursive_deps.map(&:to_formula).select do |dep|
@@ -195,7 +193,7 @@ class FormulaInstaller
       raise BuildToolsError, [formula]
     end
 
-    unless skip_deps_check?
+    unless ignore_deps?
       deps = compute_dependencies
       check_dependencies_bottled(deps) if pour_bottle? && !DevelopmentTools.installed?
       install_dependencies(deps)
@@ -213,16 +211,20 @@ class FormulaInstaller
       opoo "#{formula.full_name}: #{old_flag} was deprecated; using #{new_flag} instead!"
     end
 
-    oh1 "Installing #{Formatter.identifier(formula.full_name)}" if show_header?
+    invalid_option_names.each do |option|
+      opoo "#{formula.full_name}: this formula has no #{option} option so it will be ignored!"
+    end
+
+    options = []
+    if formula.head?
+      options << "--HEAD"
+    elsif formula.devel?
+      options << "--devel"
+    end
+    options += effective_build_options_for(formula).used_options.to_a
+    oh1 "Installing #{Formatter.identifier(formula.full_name)} #{options.join " "}" if show_header?
 
     if formula.tap && !formula.tap.private?
-      options = []
-      if formula.head?
-        options << "--HEAD"
-      elsif formula.devel?
-        options << "--devel"
-      end
-      options += effective_build_options_for(formula).used_options.to_a
       category = "install"
       action = ([formula.full_name] + options).join(" ")
       Utils::Analytics.report_event(category, action)
@@ -230,8 +232,7 @@ class FormulaInstaller
 
     @@attempted << formula
 
-    pour_bottle = pour_bottle?(warn: true)
-    if pour_bottle
+    if pour_bottle?(warn: true)
       begin
         pour
       rescue Exception => e
@@ -245,16 +246,17 @@ class FormulaInstaller
         onoe e.message
         opoo "Bottle installation failed: building from source."
         raise BuildToolsError, [formula] unless DevelopmentTools.installed?
+        compute_and_install_dependencies unless ignore_deps?
       else
         @poured_bottle = true
       end
     end
 
+    puts_requirement_messages
+
     build_bottle_preinstall if build_bottle?
 
     unless @poured_bottle
-      not_pouring = !pour_bottle || @pour_failed
-      compute_and_install_dependencies if not_pouring && !ignore_deps?
       build
       clean
 
@@ -329,17 +331,21 @@ class FormulaInstaller
   end
 
   def check_requirements(req_map)
+    @requirement_messages = []
     fatals = []
 
     req_map.each_pair do |dependent, reqs|
       next if dependent.installed?
       reqs.each do |req|
-        puts "#{dependent}: #{req.message}"
+        @requirement_messages << "#{dependent}: #{req.message}"
         fatals << req if req.fatal?
       end
     end
 
-    raise UnsatisfiedRequirements, fatals unless fatals.empty?
+    return if fatals.empty?
+
+    puts_requirement_messages
+    raise UnsatisfiedRequirements, fatals
   end
 
   def install_requirement_default_formula?(req, dependent, build)
@@ -432,12 +438,6 @@ class FormulaInstaller
     @show_header = true unless deps.empty?
   end
 
-  class DependencyInstaller < FormulaInstaller
-    def skip_deps_check?
-      true
-    end
-  end
-
   def install_dependency(dep, inherited_options)
     df = dep.to_formula
     tab = Tab.for_formula(df)
@@ -453,10 +453,11 @@ class FormulaInstaller
       installed_keg.rename(tmp_keg)
     end
 
-    fi = DependencyInstaller.new(df)
+    fi = FormulaInstaller.new(df)
     fi.options           |= tab.used_options
     fi.options           |= Tab.remap_deprecated_options(df.deprecated_options, dep.options)
     fi.options           |= inherited_options
+    fi.options           &= df.options
     fi.build_from_source  = ARGV.build_formula_from_source?(df)
     fi.verbose            = verbose? && !quieter?
     fi.debug              = debug?
@@ -808,9 +809,11 @@ class FormulaInstaller
 
   def lock
     return unless (@@locked ||= []).empty?
-    formula.recursive_dependencies.each do |dep|
-      @@locked << dep.to_formula
-    end unless ignore_deps?
+    unless ignore_deps?
+      formula.recursive_dependencies.each do |dep|
+        @@locked << dep.to_formula
+      end
+    end
     @@locked.unshift(formula)
     @@locked.uniq!
     @@locked.each(&:lock)
@@ -822,5 +825,11 @@ class FormulaInstaller
     @@locked.each(&:unlock)
     @@locked.clear
     @hold_locks = false
+  end
+
+  def puts_requirement_messages
+    return unless @requirement_messages
+    return if @requirement_messages.empty?
+    puts @requirement_messages
   end
 end

@@ -9,7 +9,6 @@ require "utils/git"
 require "utils/github"
 require "utils/hash"
 require "utils/inreplace"
-require "utils/json"
 require "utils/popen"
 require "utils/tty"
 
@@ -301,7 +300,7 @@ def which(cmd, path = ENV["PATH"])
 end
 
 def which_all(cmd, path = ENV["PATH"])
-  path.split(File::PATH_SEPARATOR).map do |p|
+  path.to_s.split(File::PATH_SEPARATOR).map do |p|
     begin
       pcmd = File.expand_path(cmd, p)
     rescue ArgumentError
@@ -374,6 +373,15 @@ def ignore_interrupts(opt = nil)
   yield
 ensure
   trap("INT", std_trap)
+end
+
+def capture_stderr
+  old = $stderr
+  $stderr = StringIO.new
+  yield
+  $stderr.string
+ensure
+  $stderr = old
 end
 
 def nostdout

@@ -151,6 +151,11 @@ class Formulary
       FileUtils.rm_f(path)
       curl url, "-o", path
       super
+    rescue MethodDeprecatedError => e
+      if url =~ %r{github.com/([\w-]+)/homebrew-([\w-]+)/}
+        e.issues_url = "https://github.com/#{$1}/homebrew-#{$2}/issues/new"
+      end
+      raise
     end
   end
 
@@ -158,7 +163,13 @@ class Formulary
   class TapLoader < FormulaLoader
     attr_reader :tap
 
-    def initialize(tapped_name)
+    def initialize(tapped_name, from: nil)
+      warn = ![:keg, :rack].include?(from)
+      name, path = formula_name_path(tapped_name, warn: warn)
+      super name, path
+    end
+
+    def formula_name_path(tapped_name, warn: true)
       user, repo, name = tapped_name.split("/", 3).map(&:downcase)
       @tap = Tap.fetch user, repo
       formula_dir = @tap.formula_dir || @tap.path
@@ -170,18 +181,38 @@ class Formulary
           name = path.basename(".rb").to_s
         elsif (new_name = @tap.formula_renames[name]) &&
               (new_path = formula_dir/"#{new_name}.rb").file?
+          old_name = name
           path = new_path
           name = new_name
+          new_name = @tap.core_tap? ? name : "#{@tap}/#{name}"
+        elsif (new_tap_name = @tap.tap_migrations[name])
+          new_tap = Tap.fetch new_tap_name
+          new_tap.install unless new_tap.installed?
+          new_tapped_name = "#{new_tap_name}/#{name}"
+          name, path = formula_name_path(new_tapped_name, warn: false)
+          old_name = tapped_name
+          new_name = new_tap.core_tap? ? name : new_tapped_name
+        end
+
+        if warn && old_name && new_name
+          opoo "Use #{new_name} instead of deprecated #{old_name}"
         end
       end
 
-      super name, path
+      [name, path]
     end
 
     def get_formula(spec, alias_path: nil)
       super
     rescue FormulaUnavailableError => e
       raise TapFormulaUnavailableError.new(tap, name), "", e.backtrace
+    end
+
+    def load_file
+      super
+    rescue MethodDeprecatedError => e
+      e.issues_url = tap.issues_url || tap.to_s
+      raise
     end
   end
 
@@ -218,8 +249,8 @@ class Formulary
   # * a formula pathname
   # * a formula URL
   # * a local bottle reference
-  def self.factory(ref, spec = :stable, alias_path: nil)
-    loader_for(ref).get_formula(spec, alias_path: alias_path)
+  def self.factory(ref, spec = :stable, alias_path: nil, from: nil)
+    loader_for(ref, from: from).get_formula(spec, alias_path: alias_path)
   end
 
   # Return a Formula instance for the given rack.
@@ -235,7 +266,7 @@ class Formulary
     if keg
       from_keg(keg, spec, alias_path: alias_path)
     else
-      factory(rack.basename.to_s, spec || :stable, alias_path: alias_path)
+      factory(rack.basename.to_s, spec || :stable, alias_path: alias_path, from: :rack)
     end
   end
 
@@ -247,16 +278,17 @@ class Formulary
     spec ||= tab.spec
 
     f = if tap.nil?
-      factory(keg.rack.basename.to_s, spec, alias_path: alias_path)
+      factory(keg.rack.basename.to_s, spec, alias_path: alias_path, from: :keg)
     else
       begin
-        factory("#{tap}/#{keg.rack.basename}", spec, alias_path: alias_path)
+        factory("#{tap}/#{keg.rack.basename}", spec, alias_path: alias_path, from: :keg)
       rescue FormulaUnavailableError
         # formula may be migrated to different tap. Try to search in core and all taps.
-        factory(keg.rack.basename.to_s, spec, alias_path: alias_path)
+        factory(keg.rack.basename.to_s, spec, alias_path: alias_path, from: :keg)
       end
     end
     f.build = tab
+    f.build.used_options = Tab.remap_deprecated_options(f.deprecated_options, tab.used_options).as_flags
     f.version.update_commit(keg.version.version.commit) if f.head? && keg.version.head?
     f
   end
@@ -291,14 +323,14 @@ class Formulary
     loader_for(ref).path
   end
 
-  def self.loader_for(ref)
+  def self.loader_for(ref, from: nil)
     case ref
     when %r{(https?|ftp|file)://}
       return FromUrlLoader.new(ref)
     when Pathname::BOTTLE_EXTNAME_RX
       return BottleLoader.new(ref)
     when HOMEBREW_TAP_FORMULA_REGEX
-      return TapLoader.new(ref)
+      return TapLoader.new(ref, from: from)
     end
 
     return FromPathLoader.new(ref) if File.extname(ref) == ".rb"
@@ -341,7 +373,7 @@ class Formulary
     end
 
     unless possible_tap_newname_formulae.empty?
-      return TapLoader.new(possible_tap_newname_formulae.first)
+      return TapLoader.new(possible_tap_newname_formulae.first, from: from)
     end
 
     possible_cached_formula = Pathname.new("#{HOMEBREW_CACHE_FORMULA}/#{ref}.rb")

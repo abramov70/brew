@@ -7,24 +7,14 @@ require "utils/shell"
 
 module Homebrew
   module Diagnostic
-    def self.missing_deps(ff)
+    def self.missing_deps(ff, hide = nil)
       missing = {}
       ff.each do |f|
-        missing_deps = f.recursive_dependencies do |dependent, dep|
-          if dep.optional? || dep.recommended?
-            tab = Tab.for_formula(dependent)
-            Dependency.prune unless tab.with?(dep)
-          elsif dep.build?
-            Dependency.prune
-          end
-        end
+        missing_dependencies = f.missing_dependencies(hide: hide)
 
-        missing_deps.map!(&:to_formula)
-        missing_deps.reject! { |d| d.installed_prefixes.any? }
-
-        unless missing_deps.empty?
-          yield f.full_name, missing_deps if block_given?
-          missing[f.full_name] = missing_deps
+        unless missing_dependencies.empty?
+          yield f.full_name, missing_dependencies if block_given?
+          missing[f.full_name] = missing_dependencies
         end
       end
       missing
@@ -79,19 +69,24 @@ module Homebrew
       end
 
       def inject_file_list(list, string)
-        list.inject(string) { |a, e| a << "  #{e}\n" }
+        list.inject(string) { |acc, elem| acc << "  #{elem}\n" }
       end
       ############# END HELPERS
 
       def development_tools_checks
         %w[
           check_for_installed_developer_tools
-        ]
+        ].freeze
       end
 
       def fatal_development_tools_checks
         %w[
-        ]
+        ].freeze
+      end
+
+      def build_error_checks
+        (development_tools_checks + %w[
+        ]).freeze
       end
 
       def check_for_installed_developer_tools
@@ -170,6 +165,9 @@ module Homebrew
           "libublio.*.dylib", # NTFS-3G
           "libUFSDNTFS.dylib", # Paragon NTFS
           "libUFSDExtFS.dylib", # Paragon ExtFS
+          "libecomlodr.dylib", # Symantec Endpoint Protection
+          "libsymsea.*.dylib", # Symantec Endpoint Protection
+          "sentinel.dylib", # SentinelOne
         ]
 
         __check_stray_files "/usr/local/lib", "*.dylib", white_list, <<-EOS.undent
@@ -190,6 +188,13 @@ module Homebrew
           "libntfs-3g.a", # NTFS-3G
           "libntfs.a", # NTFS-3G
           "libublio.a", # NTFS-3G
+          "libappfirewall.a", # Symantec Endpoint Protection
+          "libautoblock.a", # Symantec Endpoint Protection
+          "libautosetup.a", # Symantec Endpoint Protection
+          "libconnectionsclient.a", # Symantec Endpoint Protection
+          "liblocationawareness.a", # Symantec Endpoint Protection
+          "libpersonalfirewall.a", # Symantec Endpoint Protection
+          "libtrustedcomponents.a", # Symantec Endpoint Protection
         ]
 
         __check_stray_files "/usr/local/lib", "*.a", white_list, <<-EOS.undent
@@ -343,6 +348,20 @@ module Homebrew
         EOS
       end
 
+      def check_access_lock_dir
+        return unless HOMEBREW_LOCK_DIR.exist?
+        return if HOMEBREW_LOCK_DIR.writable_real?
+
+        <<-EOS.undent
+          #{HOMEBREW_LOCK_DIR} isn't writable.
+          Homebrew writes lock files to this location.
+
+          You should change the ownership and permissions of #{HOMEBREW_LOCK_DIR}
+          back to your user account.
+            sudo chown -R $(whoami) #{HOMEBREW_LOCK_DIR}
+        EOS
+      end
+
       def check_access_logs
         return unless HOMEBREW_LOGS.exist?
         return if HOMEBREW_LOGS.writable_real?
@@ -385,8 +404,26 @@ module Homebrew
         EOS
       end
 
+      def check_multiple_cellars
+        return if HOMEBREW_PREFIX.to_s == HOMEBREW_REPOSITORY.to_s
+        return unless (HOMEBREW_REPOSITORY/"Cellar").exist?
+        return unless (HOMEBREW_PREFIX/"Cellar").exist?
+
+        <<-EOS.undent
+          You have multiple Cellars.
+          You should delete #{HOMEBREW_REPOSITORY}/Cellar:
+            rm -rf #{HOMEBREW_REPOSITORY}/Cellar
+        EOS
+      end
+
       def check_homebrew_prefix
         return if HOMEBREW_PREFIX.to_s == "/usr/local"
+
+        # Allow our Jenkins CI tests to live outside of /usr/local.
+        if ENV["JENKINS_HOME"] &&
+           ENV["GIT_URL"].to_s.start_with?("https://github.com/Homebrew/brew")
+          return
+        end
 
         <<-EOS.undent
           Your Homebrew's prefix is not /usr/local.

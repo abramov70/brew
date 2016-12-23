@@ -65,8 +65,8 @@ begin
     unless internal_cmd
       internal_cmd = require? HOMEBREW_LIBRARY_PATH.join("dev-cmd", cmd)
       if internal_cmd && !ARGV.homebrew_developer?
-        safe_system "git", "config", "--file=#{HOMEBREW_REPOSITORY}/.git/config",
-                                     "--replace-all", "homebrew.devcmdrun", "true"
+        system "git", "config", "--file=#{HOMEBREW_REPOSITORY}/.git/config",
+                                "--replace-all", "homebrew.devcmdrun", "true"
         ENV["HOMEBREW_DEV_CMD_RUN"] = "1"
       end
     end
@@ -137,6 +137,14 @@ rescue RuntimeError, SystemCallError => e
   raise if e.message.empty?
   onoe e
   $stderr.puts e.backtrace if ARGV.debug?
+  exit 1
+rescue MethodDeprecatedError => e
+  Utils::Analytics.report_exception(e)
+  onoe e
+  if e.issues_url
+    $stderr.puts "If reporting this issue please do so at (not Homebrew/brew or Homebrew/core):"
+    $stderr.puts "  #{Formatter.url(e.issues_url)}"
+  end
   exit 1
 rescue Exception => e
   Utils::Analytics.report_exception(e)
